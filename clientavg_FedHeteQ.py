@@ -7,7 +7,13 @@ import copy
 import sys
 from torch.utils.data import DataLoader
 
-
+class Qinv_net(torch.nn.Module):
+    def __init__(self, n_input, n_output):
+        super(Qinv_net, self).__init__()
+        self.predict = torch.nn.Linear(n_input, n_output, bias=False)  # 线性输出层
+    def forward(self, x):
+        x = self.predict(x)
+        return x
 
 class clientAVG(Client):
     def __init__(self, device, numeric_id, train_slow, send_slow, train_data, test_data, model, batch_size, learning_rate,
@@ -38,6 +44,7 @@ class clientAVG(Client):
         self.need_frozen_list_Q = self.model_layer_list[-1:]
         self.local_public_logits = []
         self.local_private_logits = []
+        self.Qinv_net = Qinv_net(n_input=10, n_output=10) 
 
     def get_publice_data(self, public_data):
         self.public_data_loader = DataLoader(public_data, 45, drop_last=True) # batch size 可更改
@@ -135,7 +142,7 @@ class clientAVG(Client):
                 #output_logit = Tsoftmax(logit)
                 #
                 #self.local_private_logits.append(output_logit.cpu().numpy())
-                
+
                 self.local_private_logits.append(logit.cpu().numpy())
                 
         self.local_private_logits = np.concatenate(self.local_private_logits)
@@ -147,9 +154,19 @@ class clientAVG(Client):
         local_private_logits = copy.deepcopy(self.local_private_logits)
         local_private_logits = torch.from_numpy(local_private_logits)
         local_private_logits = local_private_logits.to(self.device)
+        # with torch.no_grad():
+        #     output = torch.matmul(local_private_logits, local_Q.weight.t())
+        ######### 使用 Linear_Q的weight 与 logits 求 要对齐的label ###############################
+        local_Qinv = torch.linalg.inv(local_Q.weight) #Q的逆矩阵 
+        #local_Qinv = torch.inverse(local_Q.weight)
+        
+        local_Qinv_layer = nn.Linear(10, 10, bias=False)
+        local_Qinv_layer.weight = local_Qinv
+        ### 计算开始 ###
         with torch.no_grad():
-            output = torch.matmul(local_private_logits, local_Q.weight.t())
-        return output
+            output = local_Qinv_layer(local_private_logits)
+        ########################################
+        return output #size: [495,10]
 
     def train(self):
 
@@ -211,11 +228,32 @@ class clientAVG(Client):
 
             self.optimizer.zero_grad()
 
-            output = torch.matmul(data, self.model.Linear_Q.weight.t())
+            ######
+            #output = torch.matmul(data, self.model.Linear_Q.weight.t())
+            ######### 使用 Linear_Q的weight 与 logits 求 要对齐的label ###############################
+            local_Q = copy.deepcopy(self.model.Linear_Q)
+            local_Qinv = torch.linalg.inv(local_Q.weight) #Q的逆矩阵 
+            #local_Qinv = torch.inverse(local_Q.weight)
+
+            local_Qinv_layer_opt = torch.optim.SGD(self.Qinv_net.parameters(), lr=self.learning_rate) ## Q 逆矩阵的优化器
+            self.Qinv_net.predict.weight = local_Qinv
+            local_Qinv_layer_opt.zero_grad()
+
+            ### 计算开始 ###
+            output = self.Qinv_net(data)
+            ########################################
+            ######
 
             criterion = nn.MSELoss()
             loss = criterion(output, y)
             loss.backward()
-            self.optimizer.step()
+
+            local_Qinv_layer_opt.step()
+
+            ############## 用更新后的 self.Qinv_net.predict.weight 再算逆矩阵; 更新 self.model.Linear_Q.weight ####################
+            new_local_Q = torch.linalg.inv(self.Qinv_net.predict.weight)
+            with torch.no_grad():
+                self.model.Linear_Q.weight = new_local_Q
+
             #exit(0)
 #########################################################################################
