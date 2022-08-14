@@ -1,0 +1,221 @@
+import torch
+import torch.nn as nn
+from flcore.clients.clientbase import Client
+import numpy as np
+import time
+import copy
+import sys
+from torch.utils.data import DataLoader
+
+
+
+class clientAVG(Client):
+    def __init__(self, device, numeric_id, train_slow, send_slow, train_data, test_data, model, batch_size, learning_rate,
+                 local_steps):
+        super().__init__(device, numeric_id, train_slow, send_slow, train_data, test_data, model, batch_size, learning_rate,
+                         local_steps)
+
+        self.loss = nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
+
+
+        self.Hetelabel_matrix=[[0,1,2,3,4,5,6,7,8,9],\
+            [8,9,5,0,4,3,6,7,1,2],\
+                [6,0,2,7,5,9,4,3,8,1],\
+                    [1,5,2,0,8,4,7,3,6,9],\
+                        [6,0,1,2,3,7,4,5,9,8],\
+                            [4,0,2,8,5,3,1,7,6,9],\
+                                [3,6,4,0,7,9,5,1,2,8],\
+                                    [8,2,6,5,3,7,4,0,9,1],\
+                                        [9,1,3,7,4,0,5,6,2,8],\
+                                            [2,5,1,3,6,7,8,0,9,4]]
+
+        self.public_data_loader = None
+        self.iter_public_data_loader = None
+
+        self.model_layer_list = list(dict(self.model.named_parameters()).keys())
+        self.need_frozen_list_f = self.model_layer_list[:-1]
+        self.need_frozen_list_Q = self.model_layer_list[-1:]
+        self.local_public_logits = []
+        self.local_private_logits = []
+
+    def get_publice_data(self, public_data):
+        self.public_data_loader = DataLoader(public_data, 45, drop_last=True) # batch size 可更改
+        self.iter_public_data_loader = iter(self.public_data_loader)
+
+    def savemodel(self):
+        torch.save(self.model.state_dict(), 'fedavg_net_client{}.pt'.format(self.id))
+
+    def label_2_Hete(self, inputy):
+        for yid,true_label in enumerate(inputy) :
+            inputy[yid] = self.Hetelabel_matrix[self.id][true_label]
+        return inputy
+
+    def test_accuracy_Q(self):
+        # self.model.to(self.device)
+        self.model.eval()
+
+        test_acc = 0
+        test_num = 0
+        
+        with torch.no_grad():
+            for x, y in self.testloaderfull:
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = self.label_2_Hete(y) ###########
+                y = y.to(self.device)
+                output = self.model(x)
+                test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                test_num += y.shape[0]
+
+        # self.model.cpu()
+        
+        return test_acc, test_num
+
+    def train_accuracy_and_loss_Q(self):
+        # self.model.to(self.device)
+        self.model.eval()
+
+        train_acc = 0
+        train_num = 0
+        loss = 0
+        for x, y in self.trainloaderfull:
+            if type(x) == type([]):
+                x[0] = x[0].to(self.device)
+            else:
+                x = x.to(self.device)
+            y = self.label_2_Hete(y) ###########
+            y = y.to(self.device)
+            output = self.model(x)
+            train_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+            train_num += y.shape[0]
+            loss += self.loss(output, y).item() * y.shape[0]
+
+        # self.model.cpu()
+
+        return train_acc, loss, train_num
+
+    def get_next_train_batch_public(self):
+        try:
+            # Samples a new batch for persionalizing
+            (x, y) = next(self.iter_public_data_loader)
+        except StopIteration:
+            # restart the generator if the previous generator is exhausted.
+            self.iter_public_data_loader = iter(self.public_data_loader)
+            (x, y) = next(self.iter_public_data_loader)
+
+        if type(x) == type([]):
+            x[0] = x[0].to(self.device)
+        else:
+            x = x.to(self.device)
+        y = y.to(self.device)
+
+        return x, y
+
+    def get_public_logits(self, public_logits):
+        self.local_public_logits = public_logits
+
+    def predict(self):
+        self.model.eval()
+        self.local_private_logits= []
+        #bs = 32
+        #dataarray = dataarray.astype(np.float32)
+        with torch.no_grad():
+            for step in range(11): # local step 可更改
+                x, y = self.get_next_train_batch_public()
+                y = self.label_2_Hete(y)
+                logit = self.model(x)
+                #to do# 加入softmax层
+                #Tsoftmax = nn.Softmax(dim=1)
+                #加入温度系数T#
+                #output_logit = Tsoftmax(logit.float()/1.0)
+                #
+                #output_logit = Tsoftmax(logit)
+                #
+                #self.local_private_logits.append(output_logit.cpu().numpy())
+                
+                self.local_private_logits.append(logit.cpu().numpy())
+                
+        self.local_private_logits = np.concatenate(self.local_private_logits)
+        #return self.local_private_logits
+
+    def get_truelabel(self):
+        self.model.eval()
+        local_Q = copy.deepcopy(self.model.Linear_Q)
+        local_private_logits = copy.deepcopy(self.local_private_logits)
+        local_private_logits = torch.from_numpy(local_private_logits)
+        local_private_logits = local_private_logits.to(self.device)
+        with torch.no_grad():
+            output = torch.matmul(local_private_logits, local_Q.weight.t())
+        return output
+
+    def train(self):
+
+        #print(self.model_layer_list)
+        #print(self.need_frozen_list_f)
+        #print(self.need_frozen_list_Q)
+        ####### 冻结 Q 参数 ##################################
+        for param in self.model.named_parameters():
+            if param[0] in self.need_frozen_list_Q:
+                param[1].requires_grad = False
+            else:
+                param[1].requires_grad = True
+        self.optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.learning_rate)
+        #####################################################
+
+        start_time = time.time()
+
+        # self.model.to(self.device)
+        self.model.train()
+        
+        max_local_steps = self.local_steps
+        if self.train_slow:
+            max_local_steps = np.random.randint(1, max_local_steps // 2)
+
+        for step in range(max_local_steps):
+            if self.train_slow:
+                time.sleep(0.1 * np.abs(np.random.rand()))
+            x, y = self.get_next_train_batch()
+            y = self.label_2_Hete(y)
+            self.optimizer.zero_grad()
+            output = self.model(x)
+            loss = self.loss(output, y)
+            loss.backward()
+            self.optimizer.step()
+        # self.model.cpu()
+        self.train_time_cost['num_rounds'] += 1
+        self.train_time_cost['total_cost'] += time.time() - start_time
+
+
+    def train_Q(self):
+        self.model.train()
+######################## 知识蒸馏 #################################################################
+        ####### 冻结 F 参数 ##################################
+        for param in self.model.named_parameters():
+            if param[0] in self.need_frozen_list_Q:
+                param[1].requires_grad = True
+            else:
+                param[1].requires_grad = False
+
+        self.optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.learning_rate)
+        #####################################################
+        bs = 45
+        for ind in range(0,len(self.local_private_logits),bs):
+
+            data = self.local_private_logits[ind:(ind+bs)]
+            data = torch.from_numpy(data)
+            data = data.to(self.device)
+            y = self.local_public_logits[ind:(ind+bs)]
+
+            self.optimizer.zero_grad()
+
+            output = torch.matmul(data, self.model.Linear_Q.weight.t())
+
+            criterion = nn.MSELoss()
+            loss = criterion(output, y)
+            loss.backward()
+            self.optimizer.step()
+            #exit(0)
+#########################################################################################
