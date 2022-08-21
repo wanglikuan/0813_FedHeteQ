@@ -45,7 +45,9 @@ class clientAVG(Client):
         self.need_frozen_list_Q = self.model_layer_list[-1:]
         self.local_public_logits = []
         self.local_private_logits = []
+        self.local_origin_yalign_hook = []
         self.Qinv_net = Qinv_net(n_input=10, n_output=10) 
+        self.hidden = {}
 
     def get_publice_data(self, public_data):
         self.public_data_loader = DataLoader(public_data, 495, drop_last=True) # batch size 可更改
@@ -125,16 +127,33 @@ class clientAVG(Client):
     def get_public_logits(self, public_logits):
         self.local_public_logits = public_logits
 
+    def _hook(self, _, input, output):
+        device = input[0].device
+        self.hidden[device] = flatten(output)
+
     def predict(self):
         self.model.eval()
         self.local_private_logits= []
+############ 准备hook ############
+        modules = dict([*self.model.named_modules()])
+        layer = modules.get('fc', None)
+        assert layer is not None, f'hidden layer ({self.layer}) not found'
+        handle = layer.register_forward_hook(self._hook)
+#######################
         #bs = 32
         #dataarray = dataarray.astype(np.float32)
         with torch.no_grad():
             for step in range(1): # local step 可更改
                 x, y = self.get_next_train_batch_public()
                 y = self.label_2_Hete(y)
+#######################################
+                self.hidden.clear()
+######################################
                 logit = self.model(x)
+#############################
+                hidden = self.hidden[x.device]
+                self.hidden.clear()
+#############################
                 #to do# 加入softmax层
                 #Tsoftmax = nn.Softmax(dim=1)
                 #加入温度系数T#
@@ -143,10 +162,11 @@ class clientAVG(Client):
                 #output_logit = Tsoftmax(logit)
                 #
                 #self.local_private_logits.append(output_logit.cpu().numpy())
-
+                self.local_origin_yalign_hook.append(hidden.cpu().numpy())
                 self.local_private_logits.append(logit.cpu().numpy())
                 
         self.local_private_logits = np.concatenate(self.local_private_logits)
+        self.local_origin_yalign_hook = np.concatenate(self.local_origin_yalign_hook)
         #return self.local_private_logits
 
     def get_truelabel(self):
@@ -225,6 +245,10 @@ class clientAVG(Client):
         bs = 45
         for ind in range(0,len(self.local_private_logits),bs):
 
+            origin_yalign = self.local_origin_yalign_hook[ind:(ind+bs)]
+            origin_yalign = torch.from_numpy(origin_yalign)
+            origin_yalign = origin_yalign.to(self.device)
+
             data = self.local_private_logits[ind:(ind+bs)]
             data = torch.from_numpy(data)
             data = data.to(self.device)
@@ -247,7 +271,9 @@ class clientAVG(Client):
 
             ### 计算开始 ###
             output = self.Qinv_net(data)
-            ########################################
+            #################################观察算出的 yalign 与原本的 yalign 的差距#######
+            print('origin yalign: ', origin_yalign[0:9])
+            print('output yalign: ', output[0:9])
             ######
             kl_loss = nn.KLDivLoss(reduction="batchmean")
             output = F.log_softmax(output, dim=-1)
@@ -277,7 +303,7 @@ class clientAVG(Client):
                 self.model.Linear_Q.weight.data = new_local_Q
 
             #exit(0)
-        print('client id: ', self.id, '    Q: ', new_local_Q, '    Q.dtype: ', new_local_Q.dtype)
+        #print('client id: ', self.id, '    Q: ', new_local_Q, '    Q.dtype: ', new_local_Q.dtype)
         print('client id: ', self.id, '    total-kl-loss: ', total_loss)
 
 #########################################################################################
