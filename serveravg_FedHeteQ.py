@@ -89,7 +89,7 @@ class FedHeteQ(Server):
     def train(self):
         for i in range(self.global_rounds+1):
             #self.send_models()
-            self.send_parameters_fedrep()
+            #self.send_parameters_fedrep()
             #self.send_parameters_fedbn()
 
 
@@ -127,8 +127,8 @@ class FedHeteQ(Server):
             ######################
 
             self.timestamp = time.time() #
-            self.receive_models()
-            self.aggregate_parameters()
+            #self.receive_models()
+            #self.aggregate_parameters()
             curr_timestamp = time.time() #
             agg_time = curr_timestamp - self.timestamp
             print("glob_iter: ",i,"    agg_time: ",agg_time)
