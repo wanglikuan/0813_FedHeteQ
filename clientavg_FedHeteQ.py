@@ -8,6 +8,9 @@ import sys
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
+def flatten(t):
+    return t.reshape(t.shape[0], -1)
+
 class Qinv_net(torch.nn.Module):
     def __init__(self, n_input, n_output):
         super(Qinv_net, self).__init__()
@@ -45,6 +48,7 @@ class clientAVG(Client):
         self.need_frozen_list_Q = self.model_layer_list[-1:]
         self.local_public_logits = []
         self.local_private_logits = []
+        self.local_private_label = []
         self.local_origin_yalign_hook = []
         self.Qinv_net = Qinv_net(n_input=10, n_output=10) 
         self.hidden = {}
@@ -134,6 +138,8 @@ class clientAVG(Client):
     def predict(self):
         self.model.eval()
         self.local_private_logits= []
+        self.local_private_label = []
+        self.local_origin_yalign_hook = []
 ############ 准备hook ############
         modules = dict([*self.model.named_modules()])
         layer = modules.get('fc', None)
@@ -164,7 +170,11 @@ class clientAVG(Client):
                 #self.local_private_logits.append(output_logit.cpu().numpy())
                 self.local_origin_yalign_hook.append(hidden.cpu().numpy())
                 self.local_private_logits.append(logit.cpu().numpy())
-                
+        
+                self.local_private_label.append(y.cpu().numpy())
+
+        self.local_private_label = np.concatenate(self.local_private_label)    
+        
         self.local_private_logits = np.concatenate(self.local_private_logits)
         self.local_origin_yalign_hook = np.concatenate(self.local_origin_yalign_hook)
         #return self.local_private_logits
@@ -249,6 +259,8 @@ class clientAVG(Client):
             origin_yalign = torch.from_numpy(origin_yalign)
             origin_yalign = origin_yalign.to(self.device)
 
+            labels = self.local_private_label[ind:(ind+bs)]
+
             data = self.local_private_logits[ind:(ind+bs)]
             data = torch.from_numpy(data)
             data = data.to(self.device)
@@ -262,23 +274,25 @@ class clientAVG(Client):
             local_Q = copy.deepcopy(self.model.Linear_Q)
             #local_Qinv = torch.linalg.inv(local_Q.weight) #Q的逆矩阵
             #print('client id:', self.id, '    240 Q: ', local_Q.weight) 
-            local_Qinv = torch.inverse(local_Q.weight)
+            #local_Qinv = torch.pinverse(local_Q.weight)
             #local_Qinv = F.softmax(local_Qinv, dim=-1)
 
-            local_Qinv_layer_opt = torch.optim.SGD(self.Qinv_net.parameters(), lr=(self.learning_rate/100.0)) ## Q 逆矩阵的优化器
-            self.Qinv_net.predict.weight.data = local_Qinv
+            local_Qinv_layer_opt = torch.optim.SGD(self.Qinv_net.parameters(), lr=(self.learning_rate/10.0)) ## Q 逆矩阵的优化器
+            self.Qinv_net.predict.weight.data = local_Q.weight.data
             local_Qinv_layer_opt.zero_grad()
 
             ### 计算开始 ###
-            output = self.Qinv_net(data)
+            output = self.Qinv_net(y)
             #################################观察算出的 yalign 与原本的 yalign 的差距#######
-            print('origin yalign: ', origin_yalign[0:9])
-            print('output yalign: ', output[0:9])
+            #print('client id: ', self.id,  '    origin yalign: ', origin_yalign[0:9])
+            #print('client id: ', self.id, '    output yalign: ', output[0:9])
             ######
+            #print('client id: ', self.id,  '    data: ', data[0:4], '    labels: ', labels[0:4])
+            #####
             kl_loss = nn.KLDivLoss(reduction="batchmean")
             output = F.log_softmax(output, dim=-1)
-            y = F.softmax(y, dim=-1)
-            loss = kl_loss(output, y)
+            data = F.softmax(data, dim=-1)
+            loss = kl_loss(output, data)
 
             #criterion = nn.MSELoss(reduction='mean')
             #loss = criterion(output, y)
@@ -288,22 +302,28 @@ class clientAVG(Client):
                 total_loss += loss
             #print('client id: ', self.id, '    kl-loss: ', loss)
             loss_L2 = torch.norm(self.Qinv_net.predict.weight, p=2)
-            loss = 0.5 * loss + 0.5 * loss_L2
-            
+            loss = 0.9 * loss + 0.1 * loss_L2
+
             loss.backward()
             local_Qinv_layer_opt.step()
 
             ############## 用更新后的 self.Qinv_net.predict.weight 再算逆矩阵; 更新 self.model.Linear_Q.weight ####################
             #new_local_Q = torch.linalg.inv(self.Qinv_net.predict.weight)
-            new_local_Q = torch.inverse(self.Qinv_net.predict.weight)
-            #new_local_Q = F.softmax(new_local_Q, dim=-1)
+            new_local_Q = self.Qinv_net.predict.weight.data
+            #new_local_Q = F.softmax(new_local_Q.float()/0.1, dim=-1)
             with torch.no_grad():
                 if self.id == 0:
                     new_local_Q = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device)
                 self.model.Linear_Q.weight.data = new_local_Q
 
+        #new_local_Q = F.softmax(new_local_Q/0.001, dim=-1)
+        #with torch.no_grad():
+        #    if self.id == 0:
+        #        new_local_Q = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device)
+        #    self.model.Linear_Q.weight.data = new_local_Q
+
             #exit(0)
-        #print('client id: ', self.id, '    Q: ', new_local_Q, '    Q.dtype: ', new_local_Q.dtype)
+        print('client id: ', self.id, '    Q: ', new_local_Q, '    Q.dtype: ', new_local_Q.dtype)
         print('client id: ', self.id, '    total-kl-loss: ', total_loss)
 
 #########################################################################################
