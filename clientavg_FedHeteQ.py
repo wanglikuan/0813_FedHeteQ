@@ -301,15 +301,16 @@ class clientAVG(Client):
             local_Q = copy.deepcopy(self.model.Linear_Q)
             #local_Qinv = torch.linalg.inv(local_Q.weight) #Q的逆矩阵
             #print('client id:', self.id, '    240 Q: ', local_Q.weight) 
-            #local_Qinv = torch.pinverse(local_Q.weight)
+            local_Qinv = torch.pinverse(local_Q.weight)
             #local_Qinv = F.softmax(local_Qinv, dim=-1)
 
             local_Qinv_layer_opt = torch.optim.SGD(self.Qinv_net.parameters(), lr=(self.learning_rate/10.0)) ## Q 逆矩阵的优化器
-            self.Qinv_net.predict.weight.data = local_Q.weight.data
+            #self.Qinv_net.predict.weight.data = local_Q.weight.data
+            self.Qinv_net.predict.weight.data = local_Qinv.weight.data
             local_Qinv_layer_opt.zero_grad()
 
             ### 计算开始 ###
-            output = self.Qinv_net(origin_yalign)
+            output = self.Qinv_net(data)
             #################################观察算出的 yalign 与原本的 yalign 的差距#######
             #print('client id: ', self.id,  '    origin yalign: ', origin_yalign[0:9])
             #print('client id: ', self.id, '    output yalign: ', output[0:9])
@@ -336,7 +337,7 @@ class clientAVG(Client):
 
             ############## 用更新后的 self.Qinv_net.predict.weight 再算逆矩阵; 更新 self.model.Linear_Q.weight ####################
             #new_local_Q = torch.linalg.inv(self.Qinv_net.predict.weight)
-            new_local_Q = self.Qinv_net.predict.weight.data
+            new_local_Q = torch.pinverse(self.Qinv_net.predict.weight)
             #new_local_Q = F.softmax(new_local_Q.float()/0.1, dim=-1)
             with torch.no_grad():
                 if self.id == 0:
