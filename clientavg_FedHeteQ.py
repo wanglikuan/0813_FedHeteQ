@@ -40,6 +40,18 @@ class clientAVG(Client):
                                         [9,1,3,7,4,0,5,6,2,8],\
                                             [2,5,1,3,6,7,8,0,9,4]]
 
+        self.Hetelabel_matrix_4=[[0,1,2,3],\
+            [1,2,3,0],\
+                [2,3,0,1],\
+                    [3,0,1,2],\
+                        [0,2,1,3],\
+                            [2,1,3,0],\
+                                [1,3,0,2],\
+                                    [3,0,2,1],\
+                                        [3,2,1,0],\
+                                            [2,1,0,3]]
+        self.num_labels = 4
+
         self.public_data_loader = None
         self.iter_public_data_loader = None
 
@@ -50,31 +62,31 @@ class clientAVG(Client):
         self.local_private_logits = []
         self.local_private_label = []
         self.local_origin_yalign_hook = []
-        self.Qinv_net = Qinv_net(n_input=10, n_output=10) 
+        self.Qinv_net = Qinv_net(n_input=self.num_labels, n_output=self.num_labels) 
         self.hidden = {}
 
     #### 初始化 Q 的参数为标准矩阵 ####
     def set_linearQ(self):
-        self.model.Linear_Q.weight.data = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device)
+        self.model.Linear_Q.weight.data = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device)
 
     #### 复制训练好的模型 ####
     def get_trained_model(self, tmp_model):    
-        self.model.load_state_dict(torch.load('fedheteq_net_client{}.pt'.format(self.id), map_location='cpu'))
-        # trained_model = tmp_model.to(self.device)
-        # for trained_param, self_param in zip(trained_model.parameters(), self.model.parameters()):
-        #     self_param.data = trained_param.data.clone()
-        # self.model.Linear_Q.weight.data = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device) # 初始化 Q 的参数为标准矩阵
+        trained_model = tmp_model.to(self.device)
+        for trained_param, self_param in zip(trained_model.parameters(), self.model.parameters()):
+            self_param.data = trained_param.data.clone()
+        self.model.Linear_Q.weight.data = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device) # 初始化 Q 的参数为标准矩阵
 
     def get_publice_data(self, public_data):
         self.public_data_loader = DataLoader(public_data, 495, drop_last=True) # batch size 可更改
         self.iter_public_data_loader = iter(self.public_data_loader)
 
     def savemodel(self):
-        torch.save(self.model.state_dict(), 'fedheteq_onlyQ_client{}.pt'.format(self.id))
+        torch.save(self.model.state_dict(), 'fedheteq_class4_client{}.pt'.format(self.id))
 
     def label_2_Hete(self, inputy):
         for yid,true_label in enumerate(inputy) :
-            inputy[yid] = self.Hetelabel_matrix[self.id][true_label]
+            #inputy[yid] = self.Hetelabel_matrix[self.id][true_label]
+            inputy[yid] = self.Hetelabel_matrix_4[self.id][true_label]
         return inputy
 
     def test_accuracy_Q(self):
@@ -204,7 +216,7 @@ class clientAVG(Client):
         #local_Qinv = torch.linalg.inv(local_Q.weight) #Q的逆矩阵 
         local_Qinv = torch.inverse(local_Q.weight)
         
-        local_Qinv_layer = nn.Linear(10, 10, bias=False)
+        local_Qinv_layer = nn.Linear(self.num_labels, self.num_labels, bias=False)
         local_Qinv_layer.weight.data = local_Qinv
         ### 计算开始 ###
         with torch.no_grad():
@@ -239,6 +251,7 @@ class clientAVG(Client):
             if self.train_slow:
                 time.sleep(0.1 * np.abs(np.random.rand()))
             x, y = self.get_next_train_batch()
+            print(x.size())
             y = self.label_2_Hete(y)
             self.optimizer.zero_grad()
             output = self.model(x)
@@ -325,13 +338,13 @@ class clientAVG(Client):
             #new_local_Q = F.softmax(new_local_Q.float()/0.1, dim=-1)
             with torch.no_grad():
                 if self.id == 0:
-                    new_local_Q = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device)
+                    new_local_Q = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device)
                 self.model.Linear_Q.weight.data = new_local_Q
 
         #new_local_Q = F.softmax(new_local_Q/0.001, dim=-1)
         #with torch.no_grad():
         #    if self.id == 0:
-        #        new_local_Q = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device)
+        #        new_local_Q = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device)
         #    self.model.Linear_Q.weight.data = new_local_Q
 
             #exit(0)
