@@ -50,6 +50,7 @@ class clientAVG(Client):
                                     [3,0,2,1],\
                                         [3,2,1,0],\
                                             [2,1,0,3]]
+
         self.num_labels = 4
 
         self.public_data_loader = None
@@ -65,23 +66,25 @@ class clientAVG(Client):
         self.Qinv_net = Qinv_net(n_input=self.num_labels, n_output=self.num_labels) 
         self.hidden = {}
 
+
     #### 初始化 Q 的参数为标准矩阵 ####
     def set_linearQ(self):
         self.model.Linear_Q.weight.data = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device)
 
     #### 复制训练好的模型 ####
-    def get_trained_model(self, tmp_model):    
-        trained_model = tmp_model.to(self.device)
-        for trained_param, self_param in zip(trained_model.parameters(), self.model.parameters()):
-            self_param.data = trained_param.data.clone()
-        self.model.Linear_Q.weight.data = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device) # 初始化 Q 的参数为标准矩阵
+    def get_trained_model(self):    
+        self.model.load_state_dict(torch.load('fedheteq_net_client{}.pt'.format(self.id), map_location='cpu'))
+        # trained_model = tmp_model.to(self.device)
+        # for trained_param, self_param in zip(trained_model.parameters(), self.model.parameters()):
+        #     self_param.data = trained_param.data.clone()
+        # self.model.Linear_Q.weight.data = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device) # 初始化 Q 的参数为标准矩阵
 
     def get_publice_data(self, public_data):
         self.public_data_loader = DataLoader(public_data, 495, drop_last=True) # batch size 可更改
         self.iter_public_data_loader = iter(self.public_data_loader)
 
     def savemodel(self):
-        torch.save(self.model.state_dict(), 'fedheteq_class4_client{}.pt'.format(self.id))
+        torch.save(self.model.state_dict(), 'fedheteq_onlyQ_client{}.pt'.format(self.id))
 
     def label_2_Hete(self, inputy):
         for yid,true_label in enumerate(inputy) :
@@ -251,7 +254,6 @@ class clientAVG(Client):
             if self.train_slow:
                 time.sleep(0.1 * np.abs(np.random.rand()))
             x, y = self.get_next_train_batch()
-            print(x.size())
             y = self.label_2_Hete(y)
             self.optimizer.zero_grad()
             output = self.model(x)
