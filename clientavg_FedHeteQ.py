@@ -53,6 +53,13 @@ class clientAVG(Client):
         self.Qinv_net = Qinv_net(n_input=10, n_output=10) 
         self.hidden = {}
 
+    #### 复制训练好的模型 ####
+    def get_trained_model(self, tmp_model):    
+        trained_model = tmp_model.to(self.device)
+        for trained_param, self_param in zip(trained_model.parameters(), self.model.parameters()):
+            self_param.data = trained_param.data.clone()
+        self.model.Linear_Q.weight.data = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device) # 初始化 Q 的参数为标准矩阵
+
     def get_publice_data(self, public_data):
         self.public_data_loader = DataLoader(public_data, 495, drop_last=True) # batch size 可更改
         self.iter_public_data_loader = iter(self.public_data_loader)
@@ -282,7 +289,7 @@ class clientAVG(Client):
             local_Qinv_layer_opt.zero_grad()
 
             ### 计算开始 ###
-            output = self.Qinv_net(y)
+            output = self.Qinv_net(origin_yalign)
             #################################观察算出的 yalign 与原本的 yalign 的差距#######
             #print('client id: ', self.id,  '    origin yalign: ', origin_yalign[0:9])
             #print('client id: ', self.id, '    output yalign: ', output[0:9])
@@ -291,8 +298,8 @@ class clientAVG(Client):
             #####
             kl_loss = nn.KLDivLoss(reduction="batchmean")
             output = F.log_softmax(output, dim=-1)
-            data = F.softmax(data, dim=-1)
-            loss = kl_loss(output, data)
+            y = F.softmax(y, dim=-1)
+            loss = kl_loss(output, y)
 
             #criterion = nn.MSELoss(reduction='mean')
             #loss = criterion(output, y)
