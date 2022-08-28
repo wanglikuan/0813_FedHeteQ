@@ -73,14 +73,14 @@ class clientAVG(Client):
 
     #### 复制训练好的模型 ####
     def get_trained_model(self):    
-        self.model.load_state_dict(torch.load('fedheteq_net_client{}.pt'.format(self.id), map_location='cpu'))
+        self.model.load_state_dict(torch.load('fedheteq_class4_client{}.pt'.format(self.id), map_location='cpu'))
         # trained_model = tmp_model.to(self.device)
         # for trained_param, self_param in zip(trained_model.parameters(), self.model.parameters()):
         #     self_param.data = trained_param.data.clone()
         # self.model.Linear_Q.weight.data = torch.eye(self.num_labels, dtype=torch.float32, requires_grad=True).to(self.device) # 初始化 Q 的参数为标准矩阵
 
     def get_publice_data(self, public_data):
-        self.public_data_loader = DataLoader(public_data, 495, drop_last=True) # batch size 可更改
+        self.public_data_loader = DataLoader(public_data, 415, drop_last=True) # batch size 可更改
         self.iter_public_data_loader = iter(self.public_data_loader)
 
     def savemodel(self):
@@ -279,7 +279,7 @@ class clientAVG(Client):
         self.optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.learning_rate)
         #####################################################
         total_loss = None
-        bs = 45
+        bs = 41
         for ind in range(0,len(self.local_private_logits),bs):
 
             origin_yalign = self.local_origin_yalign_hook[ind:(ind+bs)]

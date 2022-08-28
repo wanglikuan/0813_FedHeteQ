@@ -34,8 +34,8 @@ class FedHeteQ(Server):
         print("Finished creating server and clients.")
 
 ########################################################
-        public_data = read_data('Mnist-alpha20.0-ratio0.5')
-        id, train ,used_public_data = read_user_data(18, public_data, dataset=self.dataset)
+        public_data = read_data('MnistC4-alpha20.0-ratio0.5')
+        id, train ,used_public_data = read_user_data(8, public_data, dataset=self.dataset)
         self.selected_clients = self.select_clients()
         for client in self.selected_clients:
             client.get_publice_data(used_public_data)
