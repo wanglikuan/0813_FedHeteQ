@@ -53,6 +53,10 @@ class clientAVG(Client):
         self.Qinv_net = Qinv_net(n_input=10, n_output=10) 
         self.hidden = {}
 
+    #### 初始化 Q 的参数为标准矩阵 ####
+    def set_linearQ(self):
+        self.model.Linear_Q.weight.data = torch.eye(10, dtype=torch.float32, requires_grad=True).to(self.device)
+
     #### 复制训练好的模型 ####
     def get_trained_model(self, tmp_model):    
         trained_model = tmp_model.to(self.device)
@@ -65,7 +69,7 @@ class clientAVG(Client):
         self.iter_public_data_loader = iter(self.public_data_loader)
 
     def savemodel(self):
-        torch.save(self.model.state_dict(), 'fedavg_net_client{}.pt'.format(self.id))
+        torch.save(self.model.state_dict(), 'fedheteq_net_client{}.pt'.format(self.id))
 
     def label_2_Hete(self, inputy):
         for yid,true_label in enumerate(inputy) :

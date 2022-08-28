@@ -87,12 +87,68 @@ class FedHeteQ(Server):
             print("client Accurancy: ", x*1.0/y)    
 
     def train(self):
-        ### 标准训练 ###
-        # for i in range(self.global_rounds+1):
-        #     #self.send_models()
-        #     self.send_parameters_fedrep()
-        #     #self.send_parameters_fedbn()
+        #######
+        # To Do: client model (LeNet_Q) 复制训练完的 LeNet model 的参数
+        for client in self.selected_clients:
+            client.set_linearQ()
+        #######
+        ## 标准训练 ###
+        for i in range(self.global_rounds+1):
+            #self.send_models()
+            # self.send_parameters_fedrep()
+            #self.send_parameters_fedbn()
 
+
+            if i%self.eval_gap == 0:
+                print(f"\n-------------Round number: {i}-------------")
+                print("\nEvaluate global model")
+                self.evaluate_Q()
+
+            self.timestamp = time.time() #
+            self.selected_clients = self.select_clients()
+            for client in self.selected_clients:
+                client.train()
+            curr_timestamp = time.time() #
+            train_time = (curr_timestamp - self.timestamp) / len(self.selected_clients)
+            print("glob_iter: ",i,"    train_time: ",train_time)
+
+            # #########得到每个client的logits#############
+            # for client in self.selected_clients:
+            #     if client.id == 0:
+            #         client.predict()
+            #         self.server_public_logits = client.get_truelabel()
+            #         print("got client 0 logits")
+            #     else:
+            #         client.predict()
+            # ######################
+
+            # #########将public logits下发给client#############
+            # for client in self.selected_clients:
+            #     client.get_public_logits(self.server_public_logits)
+            # ######################
+
+            # #########client 进行对Q的知识蒸馏#############
+            # for client in self.selected_clients:
+            #     client.train_Q()
+            # ######################
+
+            self.timestamp = time.time() #
+            # self.receive_models()
+            # self.aggregate_parameters()
+            curr_timestamp = time.time() #
+            agg_time = curr_timestamp - self.timestamp
+            print("glob_iter: ",i,"    agg_time: ",agg_time)
+
+        # #######
+        # # To Do: client model (LeNet_Q) 复制训练完的 LeNet model 的参数
+        # for client in self.selected_clients:
+        #     ## client.id ###
+        #     tmp_model = LeNet(num_labels=10)
+        #     tmp_model.load_state_dict(torch.load('localtrain_hete_client{}.pt'.format(client.id), map_location='cpu'))
+        #     client.get_trained_model(tmp_model)
+        # #######
+        # # To Do: 仿照前文 train 但只 train Q
+        # for i in range(self.global_rounds+1):
 
         #     if i%self.eval_gap == 0:
         #         print(f"\n-------------Round number: {i}-------------")
@@ -101,8 +157,8 @@ class FedHeteQ(Server):
 
         #     self.timestamp = time.time() #
         #     self.selected_clients = self.select_clients()
-        #     for client in self.selected_clients:
-        #         client.train()
+        #     # for client in self.selected_clients:
+        #     #     client.train()
         #     curr_timestamp = time.time() #
         #     train_time = (curr_timestamp - self.timestamp) / len(self.selected_clients)
         #     print("glob_iter: ",i,"    train_time: ",train_time)
@@ -128,64 +184,13 @@ class FedHeteQ(Server):
         #     ######################
 
         #     self.timestamp = time.time() #
-        #     self.receive_models()
-        #     self.aggregate_parameters()
         #     curr_timestamp = time.time() #
         #     agg_time = curr_timestamp - self.timestamp
-        #     print("glob_iter: ",i,"    agg_time: ",agg_time)
+        #     print("glob_iter: ",i,"    agg_time: ",agg_time)        
+        # #######
 
-        #######
-        # To Do: client model (LeNet_Q) 复制训练完的 LeNet model 的参数
         for client in self.selected_clients:
-            ## client.id ###
-            tmp_model = LeNet(num_labels=10)
-            tmp_model.load_state_dict(torch.load('localtrain_hete_client{}.pt'.format(client.id), map_location='cpu'))
-            client.get_trained_model(tmp_model)
-        #######
-        # To Do: 仿照前文 train 但只 train Q
-        for i in range(self.global_rounds+1):
-
-            if i%self.eval_gap == 0:
-                print(f"\n-------------Round number: {i}-------------")
-                print("\nEvaluate global model")
-                self.evaluate_Q()
-
-            self.timestamp = time.time() #
-            self.selected_clients = self.select_clients()
-            # for client in self.selected_clients:
-            #     client.train()
-            curr_timestamp = time.time() #
-            train_time = (curr_timestamp - self.timestamp) / len(self.selected_clients)
-            print("glob_iter: ",i,"    train_time: ",train_time)
-
-            #########得到每个client的logits#############
-            for client in self.selected_clients:
-                if client.id == 0:
-                    client.predict()
-                    self.server_public_logits = client.get_truelabel()
-                    print("got client 0 logits")
-                else:
-                    client.predict()
-            ######################
-
-            #########将public logits下发给client#############
-            for client in self.selected_clients:
-                client.get_public_logits(self.server_public_logits)
-            ######################
-
-            #########client 进行对Q的知识蒸馏#############
-            for client in self.selected_clients:
-                client.train_Q()
-            ######################
-
-            self.timestamp = time.time() #
-            curr_timestamp = time.time() #
-            agg_time = curr_timestamp - self.timestamp
-            print("glob_iter: ",i,"    agg_time: ",agg_time)        
-        #######
-
-        # for client in self.selected_clients:
-        #     client.savemodel()
+            client.savemodel()
 
         print("\nBest global results.")
         self.print_(max(self.rs_test_acc), max(
